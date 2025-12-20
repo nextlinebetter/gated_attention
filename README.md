@@ -7,6 +7,12 @@ This repository contains the implementation of **gated attention** mechanisms ba
 
 ## 🆕 Updates
 
+**2025-12-20** — We will release additional analyses and case studies on the effectiveness of Gated Attention, including visualizations and quantitative investigations into the model’s internal mechanisms to offer more intuitive insights into how and why gating works.
+
+**2025-11-26** — Our paper, *Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free*, has been awarded the **NeurIPS 2025 Best Paper Award**! 🎉  
+This prestigious honor recognizes only 4 papers out of 5,290 accepted submissions, highlighting the foundational impact of our work on attention mechanism design.  
+Official announcement: [NeurIPS 2025 Best Paper Awards](https://blog.neurips.cc/2025/11/26/announcing-the-neurips-2025-best-paper-awards/)
+
 **2025-09-18** — Our paper, *Gated Attention for Large Language Models: Non-linearity, Sparsity, and Attention-Sink-Free*, has been selected as an **Oral Presentation** at **NeurIPS 2025**, placing among the top 1.5% of submissions (77 out of 5,290 accepted papers). This recognition underscores the significance and novelty of our findings in rethinking attention gating for scalable, stable, and long-context LLMs.
 
 **2025-09-10** — **Gated Attention** has been successfully integrated into the official **Qwen3-Next** architecture, as featured in Qwen’s latest research blog ([Read Here](https://qwen.ai/blog?id=4074cca80393150c248e508aa62983f9cb7d27cd&from=research.latest-advancements-list)) and deployed in the [Qwen3-Next-80B-A3B-Instruct](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct) model. This real-world adoption validates our core hypothesis: gating mechanisms significantly enhance **training stability** and **ultra-long-context performance** (up to 1M tokens).
