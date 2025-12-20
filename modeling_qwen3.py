@@ -263,6 +263,11 @@ class Qwen3Attention(nn.Module):
         self.headwise_attn_output_gate = config.headwise_attn_output_gate
         self.elementwise_attn_output_gate = config.elementwise_attn_output_gate
 
+        # Precompute reciprocal sqrt of head_dim to avoid repeated math.sqrt calls in forward
+        # Small micro-optimization: multiplication is slightly faster than division and avoids calling
+        # math.sqrt every forward pass.
+        self.inv_sqrt_head_dim = 1.0 / math.sqrt(self.head_dim)
+
         # if (self.head_dim * self.num_heads) != self.hidden_size:
         #     raise ValueError(
         #         f"hidden_size must be divisible by num_heads (got `hidden_size`: {self.hidden_size}"
@@ -333,7 +338,8 @@ class Qwen3Attention(nn.Module):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
+        # scale attention scores by 1/sqrt(head_dim). Use precomputed value for slight performance gain.
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) * self.inv_sqrt_head_dim
         if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
             attn_weights = attn_weights + causal_mask
@@ -913,13 +919,14 @@ class Qwen3Model(Qwen3PreTrainedModel):
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
         # decoder layers
-        all_hidden_states = () if output_hidden_states else None
-        all_self_attns = () if output_attentions else None
+        # Use lists for accumulation to avoid O(n^2) tuple concats; convert to tuple when returning.
+        all_hidden_states = [] if output_hidden_states else None
+        all_self_attns = [] if output_attentions else None
         next_decoder_cache = None
 
         for decoder_layer in self.layers:
             if output_hidden_states:
-                all_hidden_states += (hidden_states,)
+                all_hidden_states.append(hidden_states)
 
             if self.gradient_checkpointing and self.training:
                 layer_outputs = self._gradient_checkpointing_func(
@@ -951,17 +958,23 @@ class Qwen3Model(Qwen3PreTrainedModel):
                 next_decoder_cache = layer_outputs[2 if output_attentions else 1]
 
             if output_attentions:
-                all_self_attns += (layer_outputs[1],)
+                all_self_attns.append(layer_outputs[1])
 
         hidden_states = self.norm(hidden_states)
 
         # add hidden states from the last decoder layer
         if output_hidden_states:
-            all_hidden_states += (hidden_states,)
+            all_hidden_states.append(hidden_states)
 
         next_cache = next_decoder_cache if use_cache else None
         if return_legacy_cache:
             next_cache = next_cache.to_legacy_cache()
+
+        # Convert accumulated lists back to tuples to preserve original output types
+        if output_hidden_states:
+            all_hidden_states = tuple(all_hidden_states)
+        if output_attentions:
+            all_self_attns = tuple(all_self_attns)
 
         if not return_dict:
             return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
