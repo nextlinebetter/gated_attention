@@ -42,7 +42,7 @@ class ExpConfig:
     model_variant: str = "baseline"  # placeholder: baseline | gated_g1 | topk | rmsnorm | ...
 
     # Data
-    dataset_name: str = "openwebtext"
+    dataset_name: str = "Elriggs/openwebtext-100k"  # smaller subset for faster iteration; change to "openwebtext" for full
     dataset_config: Optional[str] = None
     text_field: str = "text"
     cache_dir: str = "./data_cache"
@@ -340,7 +340,6 @@ def main():
     # Important: max_steps (not num_train_epochs) to be explicit / comparable across variants
     train_args = TrainingArguments(
         output_dir=cfg.output_dir,
-        overwrite_output_dir=False,
         bf16=cfg.bf16,
         fp16=False,
         learning_rate=cfg.learning_rate,
@@ -359,7 +358,7 @@ def main():
         save_strategy="steps",
         save_steps=cfg.save_steps,
         save_total_limit=cfg.save_total_limit,
-        report_to=["none"],  # change to ["tensorboard"] if you want
+        report_to=["tensorboard"],  # change to ["none"] if you want
         dataloader_num_workers=min(cfg.num_proc, 8),
         remove_unused_columns=False,  # keep extensible for custom fields later
     )
