@@ -14,8 +14,8 @@
 # limitations under the License.
 """OpenAI GPT-2 configuration"""
 
-from ...configuration_utils import PreTrainedConfig
-from ...utils import logging
+from transformers.configuration_utils import PreTrainedConfig
+from transformers.utils import logging
 
 
 logger = logging.get_logger(__name__)
@@ -191,4 +191,26 @@ class GPT2Config(PreTrainedConfig):
         super().__init__(**kwargs)
 
 
-__all__ = ["GPT2Config"]
+class GPT2GatedConfig(GPT2Config):
+    """
+    GPT-2 config with optional gated-attention output variants.
+
+    Args:
+        elementwise_attn_output_gate (`bool`, *optional*, defaults to `False`):
+            Whether to apply element-wise sigmoid gates on each attention head output channel.
+        headwise_attn_output_gate (`bool`, *optional*, defaults to `False`):
+            Whether to apply head-wise sigmoid gates (one scalar per attention head output).
+    """
+
+    def __init__(
+        self,
+        elementwise_attn_output_gate=False,
+        headwise_attn_output_gate=False,
+        **kwargs,
+    ):
+        self.elementwise_attn_output_gate = elementwise_attn_output_gate
+        self.headwise_attn_output_gate = headwise_attn_output_gate
+        super().__init__(**kwargs)
+
+
+__all__ = ["GPT2Config", "GPT2GatedConfig"]

@@ -21,15 +21,16 @@ from torch.utils.data import Dataset
 
 from datasets import load_dataset, load_from_disk, DatasetDict
 from transformers import (
-    GPT2Config,
     GPT2TokenizerFast,
-    GPT2LMHeadModel,
     Trainer,
     TrainingArguments,
     DataCollatorForLanguageModeling,
     TrainerCallback,
     set_seed,
 )
+
+from gpt2_gated.configuration_gpt2 import GPT2Config, GPT2GatedConfig
+from gpt2_gated.modeling_gpt2 import GPT2LMHeadModel, GPT2GatedLMHeadModel
 
 
 # --------------------------
@@ -39,7 +40,7 @@ from transformers import (
 class ExpConfig:
     # Experiment identity
     exp_name: str = "baseline"
-    model_variant: str = "baseline"  # placeholder: baseline | gated_g1 | topk | rmsnorm | ...
+    model_variant: str = "baseline"  # baseline | gated_headwise | gated_elementwise | gated_both
 
     # Data
     dataset_name: str = "Elriggs/openwebtext-100k"  # smaller subset for faster iteration; change to "openwebtext" for full
@@ -205,13 +206,20 @@ def build_or_load_tokenized_datasets(cfg: ExpConfig, tokenizer: GPT2TokenizerFas
 # --------------------------
 def build_model(cfg: ExpConfig, tokenizer: GPT2TokenizerFast) -> GPT2LMHeadModel:
     """
-    For now returns baseline GPT-2 small initialized from scratch.
-    Later you can branch by cfg.model_variant:
-      - gated: use your modified modeling_gpt2 with gate
-      - topk attention: custom attention module
-      - rmsnorm at SDPA output: etc.
+    Build model by variant:
+      - baseline: standard GPT2Config + GPT2LMHeadModel
+      - gated_headwise: GPT2GatedConfig with head-wise output gate
+      - gated_elementwise: GPT2GatedConfig with element-wise output gate
+      - gated_both: enable both switches (model-side priority rule applies)
     """
-    config = GPT2Config(
+    supported_variants = {"baseline", "gated_headwise", "gated_elementwise", "gated_both"}
+    if cfg.model_variant not in supported_variants:
+        raise ValueError(
+            f"Unsupported model_variant={cfg.model_variant!r}. "
+            f"Choose one of {sorted(supported_variants)}."
+        )
+
+    common_config_kwargs = dict(
         vocab_size=len(tokenizer),
         n_layer=cfg.n_layer,
         n_head=cfg.n_head,
@@ -221,15 +229,22 @@ def build_model(cfg: ExpConfig, tokenizer: GPT2TokenizerFast) -> GPT2LMHeadModel
         resid_pdrop=cfg.dropout,
         embd_pdrop=cfg.dropout,
         attn_pdrop=cfg.dropout,
-        # Enable SDPA when supported by your transformers version:
-        # (If unsupported in your local copy, you can remove this line.)
+        # Enable SDPA when supported by your transformers version.
         attn_implementation="sdpa",
     )
 
-    if cfg.model_variant != "baseline":
-        print(f"[Model] WARNING: model_variant={cfg.model_variant} is not implemented yet. Using baseline.")
+    if cfg.model_variant == "baseline":
+        config = GPT2Config(**common_config_kwargs)
+        model = GPT2LMHeadModel(config)
+    else:
+        config = GPT2GatedConfig(
+            **common_config_kwargs,
+            headwise_attn_output_gate=cfg.model_variant in {"gated_headwise", "gated_both"},
+            elementwise_attn_output_gate=cfg.model_variant in {"gated_elementwise", "gated_both"},
+        )
+        model = GPT2GatedLMHeadModel(config)
 
-    model = GPT2LMHeadModel(config)
+    print(f"[Model] model_variant={cfg.model_variant}")
 
     if cfg.gradient_checkpointing:
         model.gradient_checkpointing_enable()
@@ -254,7 +269,12 @@ def parse_args() -> ExpConfig:
     # core
     p.add_argument("--output_dir", type=str, default="./runs/baseline")
     p.add_argument("--exp_name", type=str, default="baseline")
-    p.add_argument("--model_variant", type=str, default="baseline")
+    p.add_argument(
+        "--model_variant",
+        type=str,
+        default="baseline",
+        help="baseline | gated_headwise | gated_elementwise | gated_both",
+    )
     # data
     p.add_argument("--cache_dir", type=str, default="./data_cache")
     p.add_argument("--tokenized_cache_dir", type=str, default="./data_cache/owt_tokenized")

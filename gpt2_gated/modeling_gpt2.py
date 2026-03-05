@@ -22,30 +22,30 @@ import torch
 from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
-from ... import initialization as init
-from ...activations import ACT2FN, get_activation
-from ...cache_utils import Cache, DynamicCache, EncoderDecoderCache
-from ...generation import GenerationMixin
-from ...masking_utils import create_bidirectional_mask, create_causal_mask
-from ...modeling_layers import GradientCheckpointingLayer
-from ...modeling_outputs import (
+from transformers import initialization as init
+from transformers.activations import ACT2FN, get_activation
+from transformers.cache_utils import Cache, DynamicCache, EncoderDecoderCache
+from transformers.generation import GenerationMixin
+from transformers.masking_utils import create_bidirectional_mask, create_causal_mask
+from transformers.modeling_layers import GradientCheckpointingLayer
+from transformers.modeling_outputs import (
     BaseModelOutputWithPastAndCrossAttentions,
     CausalLMOutputWithCrossAttentions,
     QuestionAnsweringModelOutput,
     SequenceClassifierOutputWithPast,
     TokenClassifierOutput,
 )
-from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
-from ...pytorch_utils import Conv1D
-from ...utils import (
+from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
+from transformers.pytorch_utils import Conv1D
+from transformers.utils import (
     ModelOutput,
     auto_docstring,
     can_return_tuple,
     logging,
 )
-from ...utils.generic import maybe_autocast, merge_with_config_defaults
-from ...utils.output_capturing import OutputRecorder, capture_outputs
-from .configuration_gpt2 import GPT2Config
+from transformers.utils.generic import maybe_autocast, merge_with_config_defaults
+from transformers.utils.output_capturing import OutputRecorder, capture_outputs
+from .configuration_gpt2 import GPT2Config, GPT2GatedConfig
 
 
 logger = logging.get_logger(__name__)
@@ -101,11 +101,26 @@ class GPT2Attention(nn.Module):
         self.layer_idx = layer_idx
         self.reorder_and_upcast_attn = config.reorder_and_upcast_attn
 
+        self.headwise_attn_output_gate = getattr(config, "headwise_attn_output_gate", False)
+        self.elementwise_attn_output_gate = getattr(config, "elementwise_attn_output_gate", False)
+        if self.headwise_attn_output_gate and self.elementwise_attn_output_gate:
+            logger.warning_once(
+                "Both `headwise_attn_output_gate` and `elementwise_attn_output_gate` are enabled; "
+                "defaulting to headwise gating."
+            )
+            self.elementwise_attn_output_gate = False
+
         if self.is_cross_attention:
             self.c_attn = Conv1D(2 * self.embed_dim, self.embed_dim)
             self.q_attn = Conv1D(self.embed_dim, self.embed_dim)
         else:
-            self.c_attn = Conv1D(3 * self.embed_dim, self.embed_dim)
+            if self.headwise_attn_output_gate:
+                self.q_attn_size = self.embed_dim + self.num_heads
+            elif self.elementwise_attn_output_gate:
+                self.q_attn_size = self.embed_dim * 2
+            else:
+                self.q_attn_size = self.embed_dim
+            self.c_attn = Conv1D(self.q_attn_size + 2 * self.embed_dim, self.embed_dim)
         self.c_proj = Conv1D(self.embed_dim, self.embed_dim)
 
         self.attn_dropout = nn.Dropout(config.attn_pdrop)
@@ -193,12 +208,24 @@ class GPT2Attention(nn.Module):
                 key_states = key_states.view(shape_kv).transpose(1, 2)
                 value_states = value_states.view(shape_kv).transpose(1, 2)
         else:
-            query_states, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
+            gate_score = None
+            if self.headwise_attn_output_gate or self.elementwise_attn_output_gate:
+                query_states, key_states, value_states = self.c_attn(hidden_states).split(
+                    [self.q_attn_size, self.split_size, self.split_size], dim=2
+                )
+                if self.headwise_attn_output_gate:
+                    query_states = query_states.view(*query_states.shape[:-1], self.num_heads, self.head_dim + 1)
+                    query_states, gate_score = torch.split(query_states, [self.head_dim, 1], dim=-1)
+                else:
+                    query_states = query_states.view(*query_states.shape[:-1], self.num_heads, self.head_dim * 2)
+                    query_states, gate_score = torch.split(query_states, [self.head_dim, self.head_dim], dim=-1)
+            else:
+                query_states, key_states, value_states = self.c_attn(hidden_states).split(self.split_size, dim=2)
             shape_kv = (*key_states.shape[:-1], -1, self.head_dim)
             key_states = key_states.view(shape_kv).transpose(1, 2)
             value_states = value_states.view(shape_kv).transpose(1, 2)
 
-        shape_q = (*query_states.shape[:-1], -1, self.head_dim)
+        shape_q = (*query_states.shape[:-2], -1, self.head_dim) if query_states.dim() == 4 else (*query_states.shape[:-1], -1, self.head_dim)
         query_states = query_states.view(shape_q).transpose(1, 2)
 
         if (past_key_values is not None and not is_cross_attention) or (
@@ -232,6 +259,9 @@ class GPT2Attention(nn.Module):
                 dropout=self.attn_dropout.p if self.training else 0.0,
                 **kwargs,
             )
+
+        if not is_cross_attention and (self.headwise_attn_output_gate or self.elementwise_attn_output_gate):
+            attn_output = attn_output * torch.sigmoid(gate_score)
 
         attn_output = attn_output.reshape(*attn_output.shape[:-2], -1).contiguous()
         attn_output = self.c_proj(attn_output)
@@ -749,6 +779,10 @@ class GPT2LMHeadModel(GPT2PreTrainedModel, GenerationMixin):
         )
 
 
+class GPT2GatedLMHeadModel(GPT2LMHeadModel):
+    config_class = GPT2GatedConfig
+
+
 @auto_docstring(
     custom_intro="""
         The GPT2 Model transformer with a language modeling and a multiple-choice classification head on top e.g. for
@@ -1165,6 +1199,7 @@ __all__ = [
     "GPT2ForSequenceClassification",
     "GPT2ForTokenClassification",
     "GPT2LMHeadModel",
+    "GPT2GatedLMHeadModel",
     "GPT2Model",
     "GPT2PreTrainedModel",
 ]
