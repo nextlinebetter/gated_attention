@@ -7,8 +7,8 @@ import train_owt_gpt2
 from train_owt_gpt2 import ExpConfig, get_tokenizer, build_or_load_tokenized_datasets
 
 def _fake_load_dataset(name, config=None, cache_dir=None):
-    # mimic openwebtext: only "train" split, field is "text"
-    ds = Dataset.from_dict({"text": ["a b c", "d e f", "g h i", "j k l"]})
+    long_text = " ".join(["hello"] * 200)
+    ds = Dataset.from_dict({"text": [long_text] * 20})
     return DatasetDict({"train": ds})
 
 def test_build_tokenized_dataset_creates_cache(tmp_path, monkeypatch):

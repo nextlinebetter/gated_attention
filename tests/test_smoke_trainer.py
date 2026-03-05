@@ -43,7 +43,7 @@ def test_trainer_smoke(tmp_path):
         per_device_eval_batch_size=cfg.per_device_eval_batch_size,
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         logging_steps=1,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=2,
         report_to=["none"],
         save_strategy="no",
@@ -56,7 +56,7 @@ def test_trainer_smoke(tmp_path):
         train_dataset=ds["train"],
         eval_dataset=ds["validation"],
         data_collator=collator,
-        tokenizer=tok,
+        processing_class=tok,
     )
 
     trainer.train()

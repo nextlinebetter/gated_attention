@@ -352,7 +352,7 @@ def main():
         per_device_eval_batch_size=cfg.per_device_eval_batch_size,
         gradient_accumulation_steps=cfg.gradient_accumulation_steps,
         gradient_checkpointing=cfg.gradient_checkpointing,
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=cfg.eval_steps,
         logging_strategy="steps",
         logging_steps=cfg.logging_steps,
@@ -371,7 +371,7 @@ def main():
         args=train_args,
         train_dataset=ds["train"],
         eval_dataset=ds["validation"],
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=data_collator,
         callbacks=callbacks,
     )
